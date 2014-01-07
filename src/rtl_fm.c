@@ -92,6 +92,9 @@ static int *atan_lut = NULL;
 static int atan_lut_size = 131072; /* 512 KB */
 static int atan_lut_coef = 8;
 
+static int verbose = 0;
+static int verbose_lastfreq = 0;
+
 struct fm_state
 {
 	int      now_r, now_j;
@@ -164,6 +167,9 @@ void usage(void)
 		//"\t (path must have '\%s' and will expand to date_time_freq)\n"
 		//"\t[-H hop_fifo (default: off)\n"
 		//"\t (fifo will contain the active frequency)\n"
+        "\t[-v enables verbose output on stderr]\n"
+        "\t (currently prints frequency when locking to a\n"
+        "\t  signal in scan mode)\n"
 		"\n"
 		"Produces signed 16 bit ints, use Sox or aplay to hear them.\n"
 		"\trtl_fm ... - | play -t raw -r 24k -es -b 16 -c 1 -V1 -\n"
@@ -645,12 +651,19 @@ void full_demod(struct fm_state *fm)
 		freq_next = (fm->freq_now + 1) % fm->freq_len;
 		optimal_settings(fm, freq_next, 1);
 		fm->squelch_hits = fm->conseq_squelch + 1;  /* hair trigger */
+        if(verbose >= 1 && verbose_lastfreq != 0) {
+            fprintf(stderr, "Scan...\n");
+            verbose_lastfreq = 0;
+        }
 		/* wait for settling and flush buffer */
 		usleep(5000);
 		rtlsdr_read_sync(dev, &dump, BUFFER_DUMP, &n_read);
 		if (n_read != BUFFER_DUMP) {
 			fprintf(stderr, "Error: bad retune.\n");}
-	}
+	}else if(verbose >= 1 && verbose_lastfreq != fm->freq_now) {
+        fprintf(stderr, "Tuned to: %dHz\n", fm->freqs[fm->freq_now]);
+        verbose_lastfreq = fm->freq_now;
+    }
 }
 
 static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
@@ -812,7 +825,7 @@ int main(int argc, char **argv)
 	pthread_rwlock_init(&data_rw, NULL);
 	pthread_mutex_init(&data_mutex, NULL);
 
-	while ((opt = getopt(argc, argv, "d:f:g:s:b:l:o:t:r:p:EFA:NWMULRDCh")) != -1) {
+	while ((opt = getopt(argc, argv, "d:f:g:s:b:l:o:t:r:p:EFA:NWMULRDCvh")) != -1) {
 		switch (opt) {
 		case 'd':
 			dev_index = atoi(optarg);
@@ -901,6 +914,10 @@ int main(int argc, char **argv)
 		case 'R':
 			fm.mode_demod = &raw_demod;
 			break;
+        case 'v':
+            /*verbose =  atoi(optarg);*/
+            verbose = 1;
+            break;
 		case 'h':
 		default:
 			usage();
@@ -934,6 +951,10 @@ int main(int argc, char **argv)
 	} else {
 		filename = argv[optind];
 	}
+
+    if (verbose >= 1) {
+        fprintf(stderr, "Verbose logging enabled.\n");
+    }
 
 	ACTUAL_BUF_LENGTH = lcm_post[fm.post_downsample] * DEFAULT_BUF_LENGTH;
 	buffer = malloc(ACTUAL_BUF_LENGTH * sizeof(uint8_t));
